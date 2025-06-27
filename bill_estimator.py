@@ -129,8 +129,13 @@ class BillEstimator:
             'Hotel': 20.0
         }
         
+        # Handle NaN/None property_type
+        if not property_type or pd.isna(property_type):
+            return 15.0
+        
+        property_type_str = str(property_type)
         for ptype, intensity in defaults.items():
-            if ptype.lower() in property_type.lower():
+            if ptype.lower() in property_type_str.lower():
                 return intensity
         
         return 15.0  # General default
@@ -200,12 +205,13 @@ class BillEstimator:
         else:
             return 1.0
     
-    def _get_property_type_factor(self, property_type: str) -> float:
+    def _get_property_type_factor(self, property_type) -> float:
         """Get adjustment factor based on property type"""
-        if not property_type:
+        # Handle NaN/None property_type
+        if not property_type or pd.isna(property_type):
             return 1.0
         
-        property_type = property_type.lower()
+        property_type_str = str(property_type).lower()
         
         # Residential units in different building types have different consumption patterns
         factors = {
@@ -218,7 +224,7 @@ class BillEstimator:
         }
         
         for ptype, factor in factors.items():
-            if ptype in property_type:
+            if ptype in property_type_str:
                 return factor
         
         return 1.0
@@ -227,6 +233,18 @@ class BillEstimator:
         """Determine the electric utility for the building"""
         utility = building_data.get('Electric Distribution Utility', '')
         borough = building_data.get('Borough', '')
+        
+        # Handle NaN values for utility
+        if pd.isna(utility):
+            utility = ''
+        else:
+            utility = str(utility)
+        
+        # Handle NaN values for borough
+        if pd.isna(borough):
+            borough = ''
+        else:
+            borough = str(borough)
         
         if 'con' in utility.lower() or 'coned' in utility.lower():
             return 'coned'
