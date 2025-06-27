@@ -210,6 +210,6 @@ def internal_error(error):
 if __name__ == '__main__':
     if initialize_system():
         logger.info("Starting Flask application...")
-        app.run(debug=True, host='0.0.0.0', port=5001)
+        app.run(debug=True, host='0.0.0.0', port=5002)
     else:
         logger.error("Failed to start application - initialization failed")
