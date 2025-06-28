@@ -8,6 +8,8 @@ import socket
 from data_processor import DataProcessor
 from bill_estimator import BillEstimator
 from address_matcher import AddressMatcher
+from safety_analyzer import SafetyAnalyzer
+from route_analyzer import RouteAnalyzer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,10 +22,12 @@ CORS(app)  # Enable CORS for web extension
 data_processor = None
 bill_estimator = None
 address_matcher = None
+safety_analyzer = None
+route_analyzer = None
 
 def initialize_system():
     """Initialize all system components"""
-    global data_processor, bill_estimator, address_matcher
+    global data_processor, bill_estimator, address_matcher, safety_analyzer, route_analyzer
     
     try:
         logger.info("Initializing backend system...")
@@ -38,6 +42,13 @@ def initialize_system():
         
         # Initialize bill estimator
         bill_estimator = BillEstimator(data_processor)
+        
+        # Initialize safety analyzer
+        safety_analyzer = SafetyAnalyzer('crime_data.json')
+        safety_analyzer.load_data()
+        
+        # Initialize route analyzer
+        route_analyzer = RouteAnalyzer(safety_analyzer, "AIzaSyALD1d2zJpPqOE0e_E5rrx7JiMdAUUmfds")
         
         logger.info("Backend system initialized successfully")
         return True
@@ -205,6 +216,113 @@ def get_building_details(property_id):
     except Exception as e:
         logger.error(f"Building lookup error: {e}")
         return jsonify({'error': 'Building lookup failed'}), 500
+
+@app.route('/api/safety', methods=['POST'])
+def get_safety_rating():
+    """
+    Get safety rating for a specific area
+    
+    Expected JSON payload:
+    {
+        "address": "123 Main St, Queens, NY", // optional
+        "zip_code": "10001", // optional
+        "borough": "Manhattan", // optional
+        "radius_miles": 0.5 // optional, default 0.5
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        # Extract parameters
+        address = data.get('address')
+        zip_code = data.get('zip_code')
+        borough = data.get('borough')
+        radius_miles = float(data.get('radius_miles', 0.5))
+        
+        # Validate that at least one location parameter is provided
+        if not any([address, zip_code, borough]):
+            return jsonify({'error': 'At least one location parameter (address, zip_code, or borough) is required'}), 400
+        
+        # Get safety rating
+        safety_analysis = safety_analyzer.get_area_safety_rating(
+            zip_code=zip_code,
+            borough=borough,
+            address=address,
+            radius_miles=radius_miles
+        )
+        
+        return jsonify(safety_analysis)
+        
+    except ValueError as e:
+        return jsonify({'error': f'Invalid input: {e}'}), 400
+    except Exception as e:
+        logger.error(f"Safety analysis error: {e}")
+        return jsonify({'error': 'Safety analysis failed'}), 500
+
+@app.route('/api/safety/borough-comparison', methods=['GET'])
+def get_borough_safety_comparison():
+    """Get safety comparison across all NYC boroughs"""
+    try:
+        comparison = safety_analyzer.get_borough_comparison()
+        
+        return jsonify({
+            'borough_comparison': comparison,
+            'data_source': 'NYC 311 Service Requests',
+            'methodology': 'Complaints categorized by safety severity and weighted scoring'
+        })
+        
+    except Exception as e:
+        logger.error(f"Borough comparison error: {e}")
+        return jsonify({'error': 'Borough comparison failed'}), 500
+
+@app.route('/api/safe-routes', methods=['POST'])
+def analyze_safe_routes():
+    """
+    Analyze safe routes between two locations
+    
+    Expected JSON payload:
+    {
+        "origin": "123 Main St, Queens, NY",
+        "destination": "456 Broadway, Manhattan, NY",
+        "mode": "driving", // optional: driving, walking, transit
+        "alternatives": true // optional: get multiple route options
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        # Validate required fields
+        required_fields = ['origin', 'destination']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        origin = data['origin']
+        destination = data['destination']
+        mode = data.get('mode', 'driving')
+        
+        # Analyze safe routes
+        route_analysis = route_analyzer.analyze_safe_routes(
+            origin=origin,
+            destination=destination,
+            mode=mode
+        )
+        
+        # Check for errors
+        if 'error' in route_analysis:
+            return jsonify(route_analysis), 500
+        
+        return jsonify(route_analysis)
+        
+    except Exception as e:
+        logger.error(f"Safe route analysis error: {e}")
+        return jsonify({'error': 'Route analysis failed'}), 500
 
 @app.errorhandler(404)
 def not_found(error):
