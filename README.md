@@ -1,8 +1,9 @@
 # NYC Electricity Bill Estimation Backend
 
-A Flask-based backend API for estimating monthly electricity bills for NYC residential apartments using building energy data. 
+Frontend: A React + TypeScript + Tailwind CSS Chrome extension that calculates monthly energy costs for StreetEasy listings.
+Backend: A Flask-based backend API for estimating monthly electricity bills for NYC residential apartments using building energy data. 
 
-Frontend repo [here](https://github.com/snow-kang/wattsup-ui).
+Original frontend repo [here](https://github.com/snow-kang/wattsup-ui).
 
 ## 🏗️ System Architecture
 
@@ -20,7 +21,7 @@ Frontend repo [here](https://github.com/snow-kang/wattsup-ui).
 
 ## 🚀 Quick Start
 
-### Installation
+### Backend Installation (root level)
 
 1. **Install dependencies:**
 ```bash
@@ -43,6 +44,33 @@ python app.py
 ```
 
 The API will be available at `http://localhost:5000`
+
+## 📦 Frontend Installation (within the frontend copy folder)
+
+1. **Install dependencies:**
+
+   ```bash
+   npm install
+   ```
+
+2. **Start development server:**
+
+   ```bash
+   npm run dev
+   ```
+
+3. **Build the extension:**
+   ```bash
+   npm run build:extension
+   ```
+
+## 🔧 Loading the Extension in Chrome
+
+1. Open Chrome and navigate to `chrome://extensions/`
+2. Enable "Developer mode" (toggle in top right)
+3. Click "Load unpacked"
+4. Select the `dist` folder (created after building)
+5. The extension will appear in your Chrome toolbar
 
 ## 📡 API Endpoints
 
