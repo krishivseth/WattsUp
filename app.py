@@ -32,6 +32,9 @@ def initialize_system():
     try:
         logger.info("Initializing backend system...")
         
+        # Define Google API Key
+        google_api_key = "AIzaSyALD1d2zJpPqOE0e_E5rrx7JiMdAUUmfds"
+        
         # Load and process CSV data
         csv_file = 'NYC_Building_Energy_Filtered_Clean.csv'
         data_processor = DataProcessor(csv_file)
@@ -43,12 +46,12 @@ def initialize_system():
         # Initialize bill estimator
         bill_estimator = BillEstimator(data_processor)
         
-        # Initialize safety analyzer
-        safety_analyzer = SafetyAnalyzer('crime_data.json')
+        # Initialize safety analyzer with API key
+        safety_analyzer = SafetyAnalyzer('crime_data.json', google_api_key=google_api_key)
         safety_analyzer.load_data()
         
-        # Initialize route analyzer
-        route_analyzer = RouteAnalyzer(safety_analyzer, "AIzaSyALD1d2zJpPqOE0e_E5rrx7JiMdAUUmfds")
+        # Initialize route analyzer with the safety analyzer instance
+        route_analyzer = RouteAnalyzer(safety_analyzer, google_api_key)
         
         logger.info("Backend system initialized successfully")
         return True
@@ -334,7 +337,7 @@ def internal_error(error):
 
 if __name__ == '__main__':
     if initialize_system():
-        port = 5003
+        port = 61188
         try:
             # Check if port is in use
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

@@ -2,20 +2,63 @@ import json
 import pandas as pd
 import numpy as np
 import logging
+import requests
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
 
 logger = logging.getLogger(__name__)
 
+def _haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate distance between two points on Earth in miles"""
+    R = 3958.8  # Earth radius in miles
+    
+    lat1_rad = np.radians(lat1)
+    lon1_rad = np.radians(lon1)
+    lat2_rad = np.radians(lat2)
+    lon2_rad = np.radians(lon2)
+    
+    dlon = lon2_rad - lon1_rad
+    dlat = lat2_rad - lat1_rad
+    
+    a = np.sin(dlat / 2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2)**2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    
+    return R * c
+
 class SafetyAnalyzer:
     """Analyzes NYC crime data to provide safety ratings and summaries for specific areas"""
     
-    def __init__(self, crime_data_file: str = 'crime_data.json'):
+    def __init__(self, crime_data_file: str = 'crime_data.json', google_api_key: str = None):
         self.crime_data_file = crime_data_file
         self.crime_data = None
         self.safety_categories = self._define_safety_categories()
+        self.google_api_key = google_api_key
         
+    def _geocode_address(self, address: str) -> Optional[Tuple[float, float]]:
+        """Geocode an address to get latitude and longitude using Google Maps API"""
+        if not self.google_api_key:
+            logger.warning("Google API key not configured for geocoding")
+            return None
+        
+        try:
+            response = requests.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={'address': address, 'key': self.google_api_key}
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if data['status'] == 'OK':
+                location = data['results'][0]['geometry']['location']
+                return location['lat'], location['lng']
+            else:
+                logger.warning(f"Geocoding failed for '{address}': {data['status']}")
+                return None
+        except requests.RequestException as e:
+            logger.error(f"Geocoding request failed: {e}")
+            return None
+
     def _define_safety_categories(self) -> Dict[str, Dict]:
         """Define safety categories and their severity weights"""
         return {
@@ -189,11 +232,22 @@ class SafetyAnalyzer:
         """Filter crime data for specific area"""
         filtered_data = self.crime_data.copy()
         
-        # Filter by zip code if provided
+        # If an address is provided, use geocoding for precise filtering
+        if address and self.google_api_key:
+            coords = self._geocode_address(address)
+            if coords:
+                lat, lon = coords
+                # Calculate distances and filter by radius
+                distances = _haversine_distance(
+                    lat, lon,
+                    filtered_data['latitude'], filtered_data['longitude']
+                )
+                return filtered_data[distances <= radius_miles].copy()
+
+        # Fallback to broader filters if geocoding fails or is not used
         if zip_code:
             filtered_data = filtered_data[filtered_data['incident_zip'] == str(zip_code)]
         
-        # Filter by borough if provided
         if borough:
             borough_upper = borough.upper()
             filtered_data = filtered_data[filtered_data['borough'].str.upper() == borough_upper]

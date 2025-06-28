@@ -44,7 +44,7 @@ echo "✅ System tests passed"
 
 # Start the Flask server
 echo "🚀 Starting Flask server..."
-echo "📡 API will be available at: http://localhost:5000"
+echo "📡 API will be available at: http://localhost:61188"
 echo "💡 Press Ctrl+C to stop the server"
 echo ""
 

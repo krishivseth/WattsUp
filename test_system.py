@@ -42,7 +42,7 @@ def test_system():
         
         if search_results:
             # Test bill estimation with first result
-            building = address_matcher.find_building(search_results[0]['full_address'])
+            building = address_matcher.find_building(search_results[0]['address'])
             
             if building:
                 logger.info(f"✓ Found building: {building.get('Property Name', 'Unknown')}")
