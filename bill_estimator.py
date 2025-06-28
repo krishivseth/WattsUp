@@ -231,7 +231,10 @@ class BillEstimator:
     
     def _determine_utility(self, building_data: Dict) -> str:
         """Determine the electric utility for the building"""
-        utility = building_data.get('Electric Distribution Utility', '')
+        utility = building_data.get('Electric Distribution Utility', 'N/A')
+        utility = str(utility)
+        if utility == "nan":
+            utility = "N/A"
         borough = building_data.get('Borough', '')
         
         # Handle NaN values for utility
