@@ -1,6 +1,7 @@
 # NYC Electricity Bill Estimation Backend
 
 Frontend: A React + TypeScript + Tailwind CSS Chrome extension that calculates monthly energy costs for StreetEasy listings.
+
 Backend: A Flask-based backend API for estimating monthly electricity bills for NYC residential apartments using building energy data. 
 
 Original frontend repo [here](https://github.com/snow-kang/wattsup-ui).
