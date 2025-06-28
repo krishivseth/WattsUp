@@ -3,6 +3,7 @@ from flask_cors import CORS
 import logging
 from datetime import datetime
 import os
+import socket
 
 from data_processor import DataProcessor
 from bill_estimator import BillEstimator
@@ -44,6 +45,12 @@ def initialize_system():
     except Exception as e:
         logger.error(f"Failed to initialize system: {e}")
         return False
+
+def find_free_port():
+    """Find an available port on the host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        return s.getsockname()[1]
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -209,7 +216,16 @@ def internal_error(error):
 
 if __name__ == '__main__':
     if initialize_system():
-        logger.info("Starting Flask application...")
-        app.run(debug=True, host='0.0.0.0', port=5002)
+        port = 5003
+        try:
+            # Check if port is in use
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", port))
+        except OSError:
+            logger.warning(f"Port {port} is in use, finding an available port...")
+            port = find_free_port()
+            
+        logger.info(f"Starting Flask application on port {port}...")
+        app.run(debug=False, host='0.0.0.0', port=port)
     else:
         logger.error("Failed to start application - initialization failed")
