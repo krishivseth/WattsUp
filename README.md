@@ -1,6 +1,8 @@
 # NYC Electricity Bill Estimation Backend
 
-A Flask-based backend API for estimating monthly electricity bills for NYC residential apartments using building energy data.
+A Flask-based backend API for estimating monthly electricity bills for NYC residential apartments using building energy data. 
+
+Frontend repo [here](https://github.com/snow-kang/wattsup-ui).
 
 ## 🏗️ System Architecture
 
