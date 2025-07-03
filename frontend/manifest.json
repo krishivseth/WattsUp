@@ -1,0 +1,33 @@
+{
+    "manifest_version": 3,
+    "name": "WattsUp - Energy & Safety Analyzer",
+    "version": "1.1.0",
+    "description": "Calculate monthly energy costs and safety ratings for StreetEasy listings",
+    "permissions": [
+        "activeTab",
+        "scripting"
+    ],
+    "host_permissions": [
+        "https://streeteasy.com/*"
+    ],
+    "action": {
+        "default_popup": "index.html",
+        "default_title": "WattsUp Energy & Safety"
+    },
+    "web_accessible_resources": [
+        {
+            "resources": ["route-planner.html", "route-planner.js", "google-maps-heatmap.js"],
+            "matches": ["<all_urls>"]
+        }
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "https://streeteasy.com/*"
+            ],
+            "js": [
+                "content.js"
+            ]
+        }
+    ]
+}
