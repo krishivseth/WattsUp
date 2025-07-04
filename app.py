@@ -46,9 +46,9 @@ def initialize_system():
         # Initialize bill estimator
         bill_estimator = BillEstimator(data_processor)
         
-        # Initialize safety analyzer with API key
-        safety_analyzer = SafetyAnalyzer('crime_data.json', google_api_key=google_api_key)
-        safety_analyzer.load_data()
+        # Initialize safety analyzer with API key (no local file needed - uses NYC Open Data API)
+        # Data will be loaded on-demand per borough when safety analysis is requested
+        safety_analyzer = SafetyAnalyzer(google_api_key=google_api_key)
         
         # Initialize route analyzer with the safety analyzer instance
         route_analyzer = RouteAnalyzer(safety_analyzer, google_api_key)
@@ -297,6 +297,32 @@ def get_borough_safety_comparison():
     except Exception as e:
         logger.error(f"Borough comparison error: {e}")
         return jsonify({'error': 'Borough comparison failed'}), 500
+
+@app.route('/api/safety/refresh', methods=['POST'])
+def refresh_safety_data():
+    """Force refresh of safety data from NYC Open Data API"""
+    try:
+        data = request.get_json() or {}
+        borough = data.get('borough')  # Optional borough filter
+        
+        success = safety_analyzer.refresh_data(borough=borough)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Safety data refreshed successfully{" for " + borough if borough else ""}',
+                'borough': borough,
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'status': 'error', 
+                'message': 'Failed to refresh safety data'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Safety data refresh error: {e}")
+        return jsonify({'error': 'Safety data refresh failed'}), 500
 
 @app.route('/api/safe-routes', methods=['POST'])
 def analyze_safe_routes():

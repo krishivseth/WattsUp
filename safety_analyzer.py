@@ -6,6 +6,7 @@ import requests
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict, Counter
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,13 @@ def _haversine_distance(lat1, lon1, lat2, lon2):
 class SafetyAnalyzer:
     """Analyzes NYC crime data to provide safety ratings and summaries for specific areas"""
     
-    def __init__(self, crime_data_file: str = 'crime_data.json', google_api_key: str = None):
-        self.crime_data_file = crime_data_file
+    def __init__(self, crime_data_file: str = None, google_api_key: str = None):
+        # NYC Open Data API endpoint for 311 service requests
+        self.api_base_url = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
         self.crime_data = None
+        self.data_cache = None
+        self.cache_timestamp = None
+        self.cache_duration = 3600  # Cache for 1 hour
         self.safety_categories = self._define_safety_categories()
         self.google_api_key = google_api_key
         
@@ -130,13 +135,22 @@ class SafetyAnalyzer:
             }
         }
     
-    def load_data(self) -> bool:
-        """Load and process crime data from JSON file"""
+    def load_data(self, borough: str = None) -> bool:
+        """Load and process crime data from NYC Open Data API"""
         try:
-            logger.info(f"Loading crime data from {self.crime_data_file}...")
+            # Check if we have cached data that's still fresh and for the same borough
+            if self._is_cache_valid(borough):
+                logger.info(f"Using cached crime data{' for ' + borough if borough else ''}")
+                self.crime_data = self.data_cache.copy()
+                return True
             
-            with open(self.crime_data_file, 'r') as f:
-                raw_data = json.load(f)
+            logger.info(f"Fetching fresh crime data from NYC Open Data API{' for ' + borough if borough else ''}...")
+            
+            # Fetch data from API
+            raw_data = self._fetch_from_api(borough=borough)
+            if not raw_data:
+                logger.error("Failed to fetch data from API")
+                return False
             
             # Convert to DataFrame for easier analysis
             self.crime_data = pd.DataFrame(raw_data)
@@ -144,12 +158,147 @@ class SafetyAnalyzer:
             # Clean and process data
             self._clean_data()
             
-            logger.info(f"Loaded {len(self.crime_data)} crime reports")
+            # Cache the processed data with borough info
+            self.data_cache = self.crime_data.copy()
+            self.cache_timestamp = time.time()
+            self.cached_borough = borough
+            
+            logger.info(f"Loaded {len(self.crime_data)} crime reports from API{' for ' + borough if borough else ''}")
             return True
             
         except Exception as e:
             logger.error(f"Failed to load crime data: {e}")
+            # If API fails, create a minimal fallback dataset
+            logger.info("Creating fallback safety data...")
+            self._create_fallback_data()
+            return True
+    
+    def _is_cache_valid(self, borough: str = None) -> bool:
+        """Check if cached data is still valid for the requested borough"""
+        if self.data_cache is None or self.cache_timestamp is None:
             return False
+        
+        # Check if time is still valid
+        if (time.time() - self.cache_timestamp) >= self.cache_duration:
+            return False
+        
+        # Check if borough matches (None means all boroughs)
+        cached_borough = getattr(self, 'cached_borough', None)
+        if borough != cached_borough:
+            return False
+        
+        return True
+    
+    def _fetch_from_api(self, months_back: int = 6, borough: str = None) -> Optional[List[Dict]]:
+        """Fetch crime data from NYC Open Data API"""
+        try:
+            # Calculate date range (last 6 months by default)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=months_back * 30)
+            
+            # Format dates for the API
+            start_date_str = start_date.strftime("%Y-%m-%dT00:00:00")
+            end_date_str = end_date.strftime("%Y-%m-%dT23:59:59")
+            
+            # Build the WHERE clause
+            where_clauses = [
+                f'`created_date` BETWEEN "{start_date_str}" :: floating_timestamp AND "{end_date_str}" :: floating_timestamp'
+            ]
+            
+            # Add borough filter if specified
+            if borough:
+                # Normalize borough name for API query
+                borough_normalized = self._normalize_borough_name(borough)
+                where_clauses.append(f"UPPER(`borough`) = '{borough_normalized}'")
+            
+            where_clause = ' AND '.join(where_clauses)
+            
+            # Build the SQL query for the API
+            query = f"""SELECT
+                `unique_key`,
+                `created_date`,
+                `closed_date`,
+                `agency`,
+                `agency_name`,
+                `complaint_type`,
+                `descriptor`,
+                `location_type`,
+                `incident_zip`,
+                `incident_address`,
+                `street_name`,
+                `borough`,
+                `latitude`,
+                `longitude`,
+                `status`,
+                `resolution_description`
+            WHERE
+                {where_clause}
+            ORDER BY `created_date` DESC"""
+            
+            # Make API request
+            params = {
+                '$query': query,
+            }
+            
+            logger.info(f"Fetching data from {start_date_str} to {end_date_str}{' for ' + borough if borough else ''}")
+            response = requests.get(self.api_base_url, params=params, timeout=60)
+            response.raise_for_status()
+            
+            data = response.json()
+            logger.info(f"Successfully fetched {len(data)} records from API{' for ' + borough if borough else ''}")
+            
+            return data
+            
+        except requests.RequestException as e:
+            logger.error(f"API request failed: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error processing API response: {e}")
+            return None
+    
+    def refresh_data(self, borough: str = None) -> bool:
+        """Force refresh of crime data from API (ignores cache)"""
+        logger.info(f"Force refreshing crime data from API{' for ' + borough if borough else ''}...")
+        self.data_cache = None
+        self.cache_timestamp = None
+        if hasattr(self, 'cached_borough'):
+            delattr(self, 'cached_borough')
+        return self.load_data(borough=borough)
+    
+    def _normalize_borough_name(self, borough: str) -> str:
+        """Normalize borough name for consistent API queries"""
+        if not borough:
+            return ""
+        
+        # Convert to uppercase and strip whitespace
+        borough_upper = borough.upper().strip()
+        
+        # Handle various borough name formats
+        borough_mapping = {
+            'MANHATTAN': 'MANHATTAN',
+            'NEW YORK': 'MANHATTAN',
+            'NY': 'MANHATTAN',
+            'BROOKLYN': 'BROOKLYN',
+            'KINGS': 'BROOKLYN',
+            'QUEENS': 'QUEENS',
+            'BRONX': 'BRONX',
+            'THE BRONX': 'BRONX',
+            'STATEN ISLAND': 'STATEN ISLAND',
+            'RICHMOND': 'STATEN ISLAND',
+            'SI': 'STATEN ISLAND'
+        }
+        
+        return borough_mapping.get(borough_upper, borough_upper)
+    
+    def _create_fallback_data(self):
+        """Create minimal fallback data when API is unavailable"""
+        # Create empty DataFrame with required columns
+        columns = [
+            'unique_key', 'created_date', 'complaint_type', 'borough', 
+            'incident_zip', 'latitude', 'longitude', 'safety_category', 'safety_weight'
+        ]
+        self.crime_data = pd.DataFrame(columns=columns)
+        logger.info("Created fallback safety data (empty dataset)")
     
     def _clean_data(self):
         """Clean and normalize the crime data"""
@@ -193,11 +342,22 @@ class SafetyAnalyzer:
                               address: str = None, radius_miles: float = 0.5) -> Dict:
         """Get comprehensive safety rating for a specific area"""
         try:
+            # Load data for the specific borough if not already loaded
+            if not hasattr(self, 'crime_data') or self.crime_data is None:
+                self.load_data(borough=borough)
+            elif borough and hasattr(self, 'cached_borough') and self.cached_borough != borough:
+                # If we have data for a different borough, refresh for the requested borough
+                self.load_data(borough=borough)
+            
             # Filter data based on area criteria
             area_data = self._filter_area_data(zip_code, borough, address, radius_miles)
             
             if area_data.empty:
-                return self._create_default_rating("No crime data available for this area")
+                # If no data, try to provide a basic rating based on borough/zip
+                if self.crime_data.empty:  # Fallback mode - API was unavailable
+                    return self._create_fallback_rating(zip_code, borough, address)
+                else:
+                    return self._create_default_rating("No crime data available for this area")
             
             # Calculate safety metrics
             safety_metrics = self._calculate_safety_metrics(area_data)
@@ -516,6 +676,69 @@ class SafetyAnalyzer:
         
         return borough_stats
     
+    def _create_fallback_rating(self, zip_code: str = None, borough: str = None, address: str = None) -> Dict:
+        """Create basic safety rating when API data is unavailable"""
+        
+        # Basic borough safety ratings (general NYC knowledge)
+        borough_ratings = {
+            'Manhattan': {'score': 3.8, 'grade': 'B+', 'description': 'Generally safe with heavy foot traffic and police presence'},
+            'Brooklyn': {'score': 3.5, 'grade': 'B', 'description': 'Safety varies by neighborhood, generally improving'},
+            'Queens': {'score': 3.6, 'grade': 'B', 'description': 'Diverse borough with generally good safety record'},
+            'Bronx': {'score': 3.2, 'grade': 'B-', 'description': 'Improving safety conditions, varies by area'},
+            'Staten Island': {'score': 4.0, 'grade': 'A-', 'description': 'Generally the safest NYC borough'}
+        }
+        
+        # Try to get borough-specific rating
+        if borough and borough in borough_ratings:
+            rating_info = borough_ratings[borough]
+        else:
+            # Default rating
+            rating_info = {'score': 3.5, 'grade': 'B', 'description': 'General NYC area safety rating'}
+        
+        return {
+            'safety_rating': {
+                'score': rating_info['score'],
+                'grade': rating_info['grade'],
+                'description': rating_info['description']
+            },
+            'safety_metrics': {
+                'total_complaints': 0,
+                'high_concern_count': 0,
+                'medium_concern_count': 0,
+                'low_concern_count': 0,
+                'avg_complaints_per_month': 0
+            },
+            'complaint_breakdown': {},
+            'recent_activity': {
+                'trend': 'stable',
+                'recent_incidents': 0,
+                'comparison_text': 'No recent data available'
+            },
+            'area_info': {
+                'zip_code': zip_code,
+                'borough': borough,
+                'address': address,
+                'radius_miles': 0.5,
+                'data_points': 0
+            },
+            'safety_summary': f"Basic safety information for {borough or 'this area'}. {rating_info['description']} Live crime data temporarily unavailable - showing general area assessment.",
+            'recommendations': [
+                "Stay aware of your surroundings",
+                "Use well-lit streets when walking at night",
+                "Keep valuables secure",
+                "Trust your instincts about situations"
+            ],
+            'llm_summary': f"Safety assessment for {borough or 'this area'}: {rating_info['description']} Please note that live crime data is temporarily unavailable, so this is a general assessment.",
+            'llm_recommendations': [
+                "Follow general urban safety practices",
+                "Check local news for recent developments",
+                "Consider using ride-sharing for late night travel",
+                "Stay connected with friends when out"
+            ],
+            'data_source': 'Fallback rating (API unavailable)',
+            'analysis_timestamp': datetime.now().isoformat()
+        }
+
     def validate_system(self) -> bool:
         """Validate that the safety analysis system is working correctly"""
         if self.crime_data is None:
