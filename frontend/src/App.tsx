@@ -16,6 +16,7 @@ interface EnergyCostData {
 
 function App() {
   const [address, setAddress] = useState<string>("");
+  const [numRooms, setNumRooms] = useState<number>(1);
   const [cost, setCost] = useState<number | null>(30);
   const [error, setError] = useState<string>("");
   const [safetyData, setSafetyData] = useState<SafetyAnalysis | null>(null);
@@ -24,7 +25,7 @@ function App() {
   const [showSafetyDetails, setShowSafetyDetails] = useState<boolean>(false);
   const [routeLoading, setRouteLoading] = useState<boolean>(false);
 
-  const extractAddress = async (): Promise<string> => {
+  const extractAddressAndRooms = async (): Promise<{address: string, numRooms: number}> => {
     try {
       const [tab] = await chrome.tabs.query({
         active: true,
@@ -43,17 +44,20 @@ function App() {
         throw new Error("Could not find address on this page");
       }
 
-      return response.address;
+      return {
+        address: response.address,
+        numRooms: response.numRooms || 1 // Fallback to 1 if numRooms not found
+      };
     } catch (err) {
       throw new Error(
-        `Failed to extract address: ${
+        `Failed to extract listing info: ${
           err instanceof Error ? err.message : "Unknown error"
         }`
       );
     }
   };
 
-  const getEnergyCost = async (address: string): Promise<number> => {
+  const getEnergyCost = async (address: string, numRooms: number): Promise<number> => {
     const API_ENDPOINT = "http://127.0.0.1:62031/api/estimate";
 
     try {
@@ -62,7 +66,7 @@ function App() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ address, num_rooms: 1 }),
+        body: JSON.stringify({ address, num_rooms: numRooms }),
       });
 
       if (!response.ok) {
@@ -128,16 +132,17 @@ function App() {
   };
 
   useEffect(() => {
-    extractAddress()
-      .then(address => {
+    extractAddressAndRooms()
+      .then(({ address, numRooms }) => {
         setAddress(address);
-        getEnergyCost(address)
+        setNumRooms(numRooms);
+        getEnergyCost(address, numRooms)
           .then(setCost)
-          .catch(err => setError(err.message));
+          .catch((err: Error) => setError(err.message));
       })
-      .catch((err) =>
+      .catch((err: Error) =>
         setError(
-          err instanceof Error ? err.message : "Failed to extract address"
+          err instanceof Error ? err.message : "Failed to extract listing info"
         )
       );
   }, []);
@@ -160,9 +165,17 @@ function App() {
           </div>
         </div>
         <div className="border-b border-gray-200 mx-[-16px]" />
-        <div className="bg-gray-50 rounded-lg text-xs px-3 py-2 text-gray-700 flex items-center gap-1">
-          <span className="text-gray-400">📍</span>
-          {address || <span className="italic text-gray-400">Address will be detected automatically...</span>}
+        <div className="bg-gray-50 rounded-lg text-xs px-3 py-2 text-gray-700 space-y-1">
+          <div className="flex items-center gap-1">
+            <span className="text-gray-400">📍</span>
+            {address || <span className="italic text-gray-400">Address will be detected automatically...</span>}
+          </div>
+          {address && (
+            <div className="flex items-center gap-1">
+              <span className="text-gray-400">🏠</span>
+              <span>{numRooms === 0 ? 'Studio' : `${numRooms} bedroom${numRooms > 1 ? 's' : ''}`}</span>
+            </div>
+          )}
         </div>
         <div className="mt-2">
           <div className="text-lg font-semibold text-gray-800 mb-1">Monthly Energy Estimate</div>

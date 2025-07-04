@@ -78,15 +78,16 @@ def health_check():
 @app.route('/api/estimate', methods=['POST'])
 def estimate_bill():
     """
-    Main endpoint for electricity bill estimation
+    Main endpoint for AC-based electricity bill estimation
     
     Expected JSON payload:
     {
         "address": "123 Main St, Queens, NY",
         "num_rooms": 3,
+        "num_bathrooms": 1, // optional - will be estimated if not provided
         "apartment_type": "2br", // optional
         "building_type": "residential", // optional
-        "include_demand_charges": true // optional
+        "include_demand_charges": true // optional (legacy parameter)
     }
     """
     try:
@@ -103,30 +104,42 @@ def estimate_bill():
         
         address = data['address']
         num_rooms = int(data['num_rooms'])
+        num_bathrooms = data.get('num_bathrooms', None)
         apartment_type = data.get('apartment_type', None)
         building_type = data.get('building_type', 'residential')
-        include_demand_charges = data.get('include_demand_charges', False)
+        include_demand_charges = data.get('include_demand_charges', False)  # Legacy parameter
         
         # Find matching building
         building_match = address_matcher.find_building(address)
         if not building_match:
             return jsonify({'error': 'Building not found in database'}), 404
         
-        # Generate monthly estimates
+        # Estimate bathrooms if not provided
+        if num_bathrooms is None:
+            num_bathrooms = bill_estimator.estimate_bathroom_count(num_rooms, apartment_type)
+        
+        # Generate monthly estimates using new AC-based logic
         monthly_estimates = bill_estimator.estimate_monthly_bills(
             building_data=building_match,
             num_rooms=num_rooms,
             apartment_type=apartment_type,
             building_type=building_type,
-            include_demand_charges=include_demand_charges
+            include_demand_charges=include_demand_charges,
+            num_bathrooms=num_bathrooms
         )
         
         # Calculate annual summary
-        annual_kwh = sum(est['kwh_estimate'] for est in monthly_estimates)
         annual_bill = sum(est['estimated_bill'] for est in monthly_estimates)
         
         peak_month_data = max(monthly_estimates, key=lambda x: x['estimated_bill'])
         lowest_month_data = min(monthly_estimates, key=lambda x: x['estimated_bill'])
+        
+        # Get zip code and AC info
+        zip_code = bill_estimator._extract_zip_code(building_match)
+        ac_info = bill_estimator.get_zip_ac_estimate(zip_code)
+        
+        # Calculate AC units for display
+        num_ac_units = max(1, num_rooms - num_bathrooms)
         
         # Prepare response
         response = {
@@ -139,18 +152,21 @@ def estimate_bill():
                 'year_built': building_match.get('Year Built', ''),
                 'total_gfa': building_match.get('Property GFA - Calculated (Buildings) (ft²)', ''),
                 'occupancy_rate': building_match.get('Occupancy', ''),
-                'building_efficiency': bill_estimator.get_building_efficiency_rating(building_match)
+                'building_efficiency': bill_estimator.get_building_efficiency_rating(building_match),
+                'zip_code': zip_code
             },
             'estimation_parameters': {
                 'num_rooms': num_rooms,
-                'estimated_apartment_sqft': bill_estimator.estimate_apartment_size(num_rooms, building_type),
-                'building_intensity_kwh_per_sqft': building_match.get('Electricity - Weather Normalized Site Electricity Intensity (Grid and Onsite Renewables) (kWh/ft²)', 0),
-                'efficiency_factor': bill_estimator.calculate_efficiency_factor(building_match.get('Year Built', 2000)),
-                'occupancy_factor': float(building_match.get('Occupancy', 100)) / 100.0 if building_match.get('Occupancy') else 1.0
+                'num_bathrooms': num_bathrooms,
+                'num_ac_units': num_ac_units,
+                'per_ac_monthly_cost': ac_info['per_ac_monthly_cost'],
+                'cost_tier': ac_info['cost_tier'],
+                'energy_rating_factor': bill_estimator._calculate_energy_rating_factor(building_match, zip_code),
+                'base_extra_cost': bill_estimator.base_extra_cost,
+                'energy_rating_multiplier': bill_estimator.energy_rating_multiplier
             },
             'monthly_estimates': monthly_estimates,
             'annual_summary': {
-                'total_kwh': round(annual_kwh, 0),
                 'total_bill': round(annual_bill, 2),
                 'average_monthly_bill': round(annual_bill / 12, 2),
                 'peak_month': peak_month_data['month'],
@@ -160,12 +176,13 @@ def estimate_bill():
             },
             'rate_structure': bill_estimator.get_rate_structure(building_match),
             'methodology': {
-                'data_source': 'NYC Building Energy and Water Data Disclosure',
-                'year': '2022',
-                'weather_normalized': True,
+                'model': 'AC-based estimation',
+                'formula': 'Total bill = Per AC bill * (# rooms) + $15 extra + $10 * (energy rating factor)',
+                'data_source': 'NYC Building Energy Data + Zip-level AC cost estimates',
+                'year': '2024',
+                'seasonal_adjustment': True,
                 'building_efficiency_considered': True,
-                'occupancy_adjusted': True,
-                'includes_seasonality': True
+                'neighborhood_factor_included': True
             }
         }
         
@@ -337,7 +354,7 @@ def internal_error(error):
 
 if __name__ == '__main__':
     if initialize_system():
-        port = 61188
+        port = 62031
         try:
             # Check if port is in use
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

@@ -1,9 +1,83 @@
 chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
     if (request.action === 'extractAddress') {
         const address = extractAddressFromPage();
-        sendResponse({ address: address });
+        const numRooms = extractRoomCountFromPage();
+        sendResponse({ address: address, numRooms: numRooms });
     }
 });
+
+function extractRoomCountFromPage() {
+    // StreetEasy bedroom extraction patterns
+    const bedroomPatterns = [
+        // Look for "2 bed" or "2 bedroom" patterns
+        /(\d+)\s*(?:bed|bedroom|br)(?:room)?s?/i,
+        // Look for "Studio" or "Studio apartment"
+        /studio/i
+    ];
+
+    // Common selectors where bedroom info might be found
+    const selectors = [
+        '[data-testid="listing-details"]',
+        '[class*="listing-details"]',
+        '[class*="unit-info"]',
+        '[class*="bedroom"]',
+        '[class*="details"]',
+        '.listing-title',
+        'h1',
+        'h2',
+        '[class*="summary"]'
+    ];
+
+    // Try to find bedroom info in specific elements
+    for (const selector of selectors) {
+        const elements = document.querySelectorAll(selector);
+        for (const element of elements) {
+            if (element && element.textContent) {
+                const text = element.textContent.trim();
+                
+                // Check for studio
+                if (/studio/i.test(text)) {
+                    return 0; // Studio = 0 bedrooms
+                }
+                
+                // Check for bedroom count
+                const bedroomMatch = text.match(/(\d+)\s*(?:bed|bedroom|br)(?:room)?s?/i);
+                if (bedroomMatch) {
+                    const count = parseInt(bedroomMatch[1]);
+                    if (count >= 1 && count <= 10) { // Reasonable range
+                        return count;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: search all text on page for bedroom info
+    const allText = document.body.innerText;
+    
+    // Check for studio in page text
+    if (/studio\s*apartment|studio\s*unit|studio\s*rental/i.test(allText)) {
+        return 0;
+    }
+    
+    // Look for bedroom patterns in all text
+    const matches = allText.match(/(\d+)\s*(?:bed|bedroom|br)(?:room)?s?/gi);
+    if (matches && matches.length > 0) {
+        // Take the first reasonable bedroom count found
+        for (const match of matches) {
+            const numberMatch = match.match(/(\d+)/);
+            if (numberMatch) {
+                const count = parseInt(numberMatch[1]);
+                if (count >= 1 && count <= 10) {
+                    return count;
+                }
+            }
+        }
+    }
+
+    // Default fallback if no bedroom info found
+    return 1;
+}
 
 function extractAddressFromPage() {
     const aboutBuildingSection = Array.from(document.querySelectorAll('*')).find(el =>
