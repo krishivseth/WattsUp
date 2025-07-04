@@ -13,3 +13,4 @@ six>=1.16.0
 thefuzz>=0.19
 requests==2.31.0
 googlemaps==4.10.0
+openai==0.28.1

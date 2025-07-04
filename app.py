@@ -10,6 +10,7 @@ from bill_estimator import BillEstimator
 from address_matcher import AddressMatcher
 from safety_analyzer import SafetyAnalyzer
 from route_analyzer import RouteAnalyzer
+from reviews_analyzer import ReviewsAnalyzer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,10 +25,11 @@ bill_estimator = None
 address_matcher = None
 safety_analyzer = None
 route_analyzer = None
+reviews_analyzer = None
 
 def initialize_system():
     """Initialize all system components"""
-    global data_processor, bill_estimator, address_matcher, safety_analyzer, route_analyzer
+    global data_processor, bill_estimator, address_matcher, safety_analyzer, route_analyzer, reviews_analyzer
     
     try:
         logger.info("Initializing backend system...")
@@ -52,6 +54,10 @@ def initialize_system():
         
         # Initialize route analyzer with the safety analyzer instance
         route_analyzer = RouteAnalyzer(safety_analyzer, google_api_key)
+        
+        # Initialize reviews analyzer with Google API key and OpenAI key
+        openai_api_key = os.getenv('OPENAI_API_KEY')  # Get from environment variables
+        reviews_analyzer = ReviewsAnalyzer(google_api_key, openai_api_key)
         
         logger.info("Backend system initialized successfully")
         return True
@@ -177,7 +183,7 @@ def estimate_bill():
             'rate_structure': bill_estimator.get_rate_structure(building_match),
             'methodology': {
                 'model': 'AC-based estimation',
-                'formula': 'Total bill = Per AC bill * (# rooms) + $15 extra + $10 * (energy rating factor)',
+                'formula': 'Total bill = Per AC bill * (# rooms + 1) + $15 extra + $10 * (energy rating factor)',
                 'data_source': 'NYC Building Energy Data + Zip-level AC cost estimates',
                 'year': '2024',
                 'seasonal_adjustment': True,
@@ -369,6 +375,35 @@ def analyze_safe_routes():
     except Exception as e:
         logger.error(f"Safe route analysis error: {e}")
         return jsonify({'error': 'Route analysis failed'}), 500
+
+@app.route('/api/reviews', methods=['POST'])
+def get_building_reviews():
+    """
+    Analyze Google Reviews for an apartment building
+    
+    Expected JSON payload:
+    {
+        "address": "123 Main St, Queens, NY",
+        "building_name": "Optional Building Name"
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'address' not in data:
+            return jsonify({'error': 'Address is required'}), 400
+        
+        address = data['address']
+        building_name = data.get('building_name', None)
+        
+        # Analyze building reviews
+        result = reviews_analyzer.analyze_building_reviews(address, building_name)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Reviews analysis error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.errorhandler(404)
 def not_found(error):

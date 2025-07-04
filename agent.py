@@ -10,6 +10,7 @@ from tools.electricity_estimation_tool import ElectricityEstimationTool
 from tools.safety_analysis_tool import SafetyAnalysisTool
 from tools.route_analysis_tool import RouteAnalysisTool
 from tools.openai_summary_tool import OpenAISummaryTool
+from tools.reviews_analysis_tool import ReviewsAnalysisTool
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +20,14 @@ class PropertyAnalysisAgent:
     """
     
     def __init__(self, data_processor, bill_estimator, address_matcher, 
-                 safety_analyzer, route_analyzer, openai_api_key: Optional[str] = None):
+                 safety_analyzer, route_analyzer, reviews_analyzer, openai_api_key: Optional[str] = None):
         """Initialize the agent with required components"""
         self.data_processor = data_processor
         self.bill_estimator = bill_estimator
         self.address_matcher = address_matcher
         self.safety_analyzer = safety_analyzer
         self.route_analyzer = route_analyzer
+        self.reviews_analyzer = reviews_analyzer
         
         # Initialize tools
         self.tools = {
@@ -34,6 +36,7 @@ class PropertyAnalysisAgent:
             'electricity_estimation': ElectricityEstimationTool(bill_estimator),
             'safety_analysis': SafetyAnalysisTool(safety_analyzer),
             'route_analysis': RouteAnalysisTool(route_analyzer),
+            'reviews_analysis': ReviewsAnalysisTool(reviews_analyzer),
             'openai_summary': OpenAISummaryTool(openai_api_key)
         }
         

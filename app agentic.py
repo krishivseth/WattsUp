@@ -10,6 +10,7 @@ from bill_estimator import BillEstimator
 from address_matcher import AddressMatcher
 from safety_analyzer import SafetyAnalyzer
 from route_analyzer import RouteAnalyzer
+from reviews_analyzer import ReviewsAnalyzer
 from agent import PropertyAnalysisAgent
 
 # Configure logging
@@ -25,11 +26,12 @@ bill_estimator = None
 address_matcher = None
 safety_analyzer = None
 route_analyzer = None
+reviews_analyzer = None
 agent = None
 
 def initialize_system():
     """Initialize all system components"""
-    global data_processor, bill_estimator, address_matcher, safety_analyzer, route_analyzer, agent
+    global data_processor, bill_estimator, address_matcher, safety_analyzer, route_analyzer, reviews_analyzer, agent
     
     try:
         logger.info("Initializing backend system...")
@@ -55,16 +57,18 @@ def initialize_system():
         # Initialize route analyzer with the safety analyzer instance
         route_analyzer = RouteAnalyzer(safety_analyzer, google_api_key)
         
-        # Initialize the property analysis agent
-        # Get OpenAI API key from environment
-        openai_api_key = ""
+        # Initialize reviews analyzer with Google API key and OpenAI key
+        openai_api_key = os.getenv('OPENAI_API_KEY', "")  # Get from environment variables
+        reviews_analyzer = ReviewsAnalyzer(google_api_key, openai_api_key)
         
+        # Initialize the property analysis agent
         agent = PropertyAnalysisAgent(
             data_processor=data_processor,
             bill_estimator=bill_estimator,
             address_matcher=address_matcher,
             safety_analyzer=safety_analyzer,
             route_analyzer=route_analyzer,
+            reviews_analyzer=reviews_analyzer,
             openai_api_key=openai_api_key
         )
         
@@ -192,7 +196,7 @@ def estimate_bill():
             'rate_structure': bill_estimator.get_rate_structure(building_match),
             'methodology': {
                 'model': 'AC-based estimation',
-                'formula': 'Total bill = Per AC bill * (# rooms) + $15 extra + $10 * (energy rating factor)',
+                'formula': 'Total bill = Per AC bill * (# rooms + 1) + $15 extra + $10 * (energy rating factor)',
                 'data_source': 'NYC Building Energy Data + Zip-level AC cost estimates',
                 'year': '2024',
                 'seasonal_adjustment': True,
@@ -594,6 +598,35 @@ def get_ai_summary_preference():
     except Exception as e:
         logger.error(f"Failed to get AI summary preference: {e}")
         return jsonify({'error': 'Failed to get AI summary preference'}), 500
+
+@app.route('/api/reviews', methods=['POST'])
+def get_building_reviews():
+    """
+    Analyze Google Reviews for an apartment building
+    
+    Expected JSON payload:
+    {
+        "address": "123 Main St, Queens, NY",
+        "building_name": "Optional Building Name"
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'address' not in data:
+            return jsonify({'error': 'Address is required'}), 400
+        
+        address = data['address']
+        building_name = data.get('building_name', None)
+        
+        # Analyze building reviews
+        result = reviews_analyzer.analyze_building_reviews(address, building_name)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Reviews analysis error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @app.errorhandler(404)
 def not_found(error):
