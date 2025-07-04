@@ -31,13 +31,15 @@ class SafetyAnalyzer:
     """Analyzes NYC crime data to provide safety ratings and summaries for specific areas"""
     
     def __init__(self, crime_data_file: str = None, google_api_key: str = None):
-        # NYC Open Data API endpoint for 311 service requests
-        self.api_base_url = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
+        # NYC Open Data API endpoints
+        self.api_311_url = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"  # 311 service requests
+        self.api_crime_url = "https://data.cityofnewyork.us/resource/qgea-i56i.json"  # NYPD crime data
         self.crime_data = None
         self.data_cache = None
         self.cache_timestamp = None
         self.cache_duration = 3600  # Cache for 1 hour
         self.safety_categories = self._define_safety_categories()
+        self.crime_categories = self._define_crime_categories()
         self.google_api_key = google_api_key
         
     def _geocode_address(self, address: str) -> Optional[Tuple[float, float]]:
@@ -135,25 +137,112 @@ class SafetyAnalyzer:
             }
         }
     
+    def _define_crime_categories(self) -> Dict[str, Dict]:
+        """Define NYPD crime categories and their severity weights"""
+        return {
+            'VIOLENT_CRIME': {
+                'weight': 4.0,
+                'types': [
+                    'ASSAULT 3 & RELATED OFFENSES',
+                    'FELONY ASSAULT',
+                    'ROBBERY',
+                    'RAPE',
+                    'MURDER & NON-NEGL. MANSLAUGHTER',
+                    'SEX CRIMES',
+                    'KIDNAPPING',
+                    'ARSON',
+                    'HOMICIDE-NEGLIGENT,UNCLASSIFIED'
+                ],
+                'description': 'Serious violent crimes posing immediate danger'
+            },
+            'PROPERTY_CRIME': {
+                'weight': 2.5,
+                'types': [
+                    'BURGLARY',
+                    'GRAND LARCENY',
+                    'PETIT LARCENY',
+                    'GRAND LARCENY OF MOTOR VEHICLE',
+                    'THEFT OF SERVICES',
+                    'CRIMINAL MISCHIEF & RELATED OF',
+                    'POSSESSION OF STOLEN PROPERTY',
+                    'THEFT-FRAUD'
+                ],
+                'description': 'Property crimes affecting personal security'
+            },
+            'DRUG_CRIME': {
+                'weight': 2.0,
+                'types': [
+                    'DANGEROUS DRUGS',
+                    'CONTROLLED SUBSTANCE-RELATED',
+                    'CANNABIS RELATED OFFENSES'
+                ],
+                'description': 'Drug-related offenses indicating area activity'
+            },
+            'PUBLIC_ORDER': {
+                'weight': 1.5,
+                'types': [
+                    'HARRASSMENT 2',
+                    'OFFENSES AGAINST PUBLIC ORDER',
+                    'DISORDERLY CONDUCT',
+                    'GAMBLING',
+                    'PROSTITUTION & RELATED OFFENSES',
+                    'WEAPONS POSSESSION',
+                    'DANGEROUS WEAPONS',
+                    'FIREARMS LICENSING',
+                    'ALCOHOLIC BEVERAGE CONTROL LAW'
+                ],
+                'description': 'Public order violations affecting neighborhood safety'
+            },
+            'MINOR_OFFENSES': {
+                'weight': 1.0,
+                'types': [
+                    'OFF. AGNST PUB ORD SENSBLTY &',
+                    'MISCELLANEOUS PENAL LAW',
+                    'VEHICLE AND TRAFFIC LAWS',
+                    'ADMINISTRATIVE CODE',
+                    'AGRICULTURE & MRKTS LAW-UNCLASSIFIED',
+                    'NEW YORK CITY HEALTH CODE',
+                    'ENDAN WELFARE INCOMP',
+                    'OTHER OFFENSES RELATED TO THEF'
+                ],
+                'description': 'Minor violations with minimal safety impact'
+            }
+        }
+    
     def load_data(self, borough: str = None) -> bool:
-        """Load and process crime data from NYC Open Data API"""
+        """Load and process safety data from both 311 and NYPD crime APIs"""
         try:
             # Check if we have cached data that's still fresh and for the same borough
             if self._is_cache_valid(borough):
-                logger.info(f"Using cached crime data{' for ' + borough if borough else ''}")
+                logger.info(f"Using cached safety data{' for ' + borough if borough else ''}")
                 self.crime_data = self.data_cache.copy()
                 return True
             
-            logger.info(f"Fetching fresh crime data from NYC Open Data API{' for ' + borough if borough else ''}...")
+            logger.info(f"Fetching fresh safety data from NYC Open Data APIs{' for ' + borough if borough else ''}...")
             
-            # Fetch data from API
-            raw_data = self._fetch_from_api(borough=borough)
-            if not raw_data:
-                logger.error("Failed to fetch data from API")
+            # Fetch data from both APIs
+            service_311_data = self._fetch_311_data(borough=borough)
+            nypd_crime_data = self._fetch_nypd_crime_data(borough=borough)
+            
+            if not service_311_data and not nypd_crime_data:
+                logger.error("Failed to fetch data from both APIs")
                 return False
             
+            # Combine and process data
+            combined_data = []
+            
+            # Add 311 service requests
+            if service_311_data:
+                logger.info(f"Loaded {len(service_311_data)} 311 service requests")
+                combined_data.extend(service_311_data)
+            
+            # Add NYPD crime data
+            if nypd_crime_data:
+                logger.info(f"Loaded {len(nypd_crime_data)} NYPD crime incidents")
+                combined_data.extend(nypd_crime_data)
+            
             # Convert to DataFrame for easier analysis
-            self.crime_data = pd.DataFrame(raw_data)
+            self.crime_data = pd.DataFrame(combined_data)
             
             # Clean and process data
             self._clean_data()
@@ -163,11 +252,11 @@ class SafetyAnalyzer:
             self.cache_timestamp = time.time()
             self.cached_borough = borough
             
-            logger.info(f"Loaded {len(self.crime_data)} crime reports from API{' for ' + borough if borough else ''}")
+            logger.info(f"Loaded {len(self.crime_data)} total safety incidents from both APIs{' for ' + borough if borough else ''}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to load crime data: {e}")
+            logger.error(f"Failed to load safety data: {e}")
             # If API fails, create a minimal fallback dataset
             logger.info("Creating fallback safety data...")
             self._create_fallback_data()
@@ -189,12 +278,12 @@ class SafetyAnalyzer:
         
         return True
     
-    def _fetch_from_api(self, months_back: int = 6, borough: str = None) -> Optional[List[Dict]]:
-        """Fetch crime data from NYC Open Data API"""
+    def _fetch_311_data(self, days_back: int = 180, borough: str = None) -> Optional[List[Dict]]:
+        """Fetch 311 service requests from NYC Open Data API"""
         try:
-            # Calculate date range (last 6 months by default)
+            # Calculate date range (last 180 days by default)
             end_date = datetime.now()
-            start_date = end_date - timedelta(days=months_back * 30)
+            start_date = end_date - timedelta(days=days_back)
             
             # Format dates for the API
             start_date_str = start_date.strftime("%Y-%m-%dT00:00:00")
@@ -240,25 +329,106 @@ class SafetyAnalyzer:
                 '$query': query,
             }
             
-            logger.info(f"Fetching data from {start_date_str} to {end_date_str}{' for ' + borough if borough else ''}")
-            response = requests.get(self.api_base_url, params=params, timeout=60)
+            logger.info(f"Fetching 311 data from {start_date_str} to {end_date_str}{' for ' + borough if borough else ''}")
+            response = requests.get(self.api_311_url, params=params, timeout=60)
             response.raise_for_status()
             
             data = response.json()
-            logger.info(f"Successfully fetched {len(data)} records from API{' for ' + borough if borough else ''}")
+            
+            # Add data source marker
+            for record in data:
+                record['data_source'] = '311'
+            
+            logger.info(f"Successfully fetched {len(data)} 311 records{' for ' + borough if borough else ''}")
             
             return data
             
         except requests.RequestException as e:
-            logger.error(f"API request failed: {e}")
+            logger.error(f"311 API request failed: {e}")
             return None
         except Exception as e:
-            logger.error(f"Error processing API response: {e}")
+            logger.error(f"Error processing 311 API response: {e}")
+            return None
+    
+    def _fetch_nypd_crime_data(self, days_back: int = 180, borough: str = None) -> Optional[List[Dict]]:
+        """Fetch NYPD crime data from NYC Open Data API"""
+        try:
+            # Calculate date range (last 180 days by default)
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days_back)
+            
+            # Format dates for the API
+            start_date_str = start_date.strftime("%Y-%m-%dT00:00:00")
+            end_date_str = end_date.strftime("%Y-%m-%dT23:59:59")
+            
+            # Build the WHERE clause
+            where_clauses = [
+                f'`cmplnt_fr_dt` BETWEEN "{start_date_str}" :: floating_timestamp AND "{end_date_str}" :: floating_timestamp',
+                '`latitude` IS NOT NULL',
+                '`longitude` IS NOT NULL'
+            ]
+            
+            # Add borough filter if specified
+            if borough:
+                # Normalize borough name for API query
+                borough_normalized = self._normalize_borough_name(borough)
+                where_clauses.append(f"UPPER(`boro_nm`) = '{borough_normalized}'")
+            
+            where_clause = ' AND '.join(where_clauses)
+            
+            # Build the SQL query for the API
+            query = f"""SELECT
+                `cmplnt_num` as unique_key,
+                `cmplnt_fr_dt` as created_date,
+                `rpt_dt` as closed_date,
+                `pd_desc` as complaint_type,
+                `crm_atpt_cptd_cd` as descriptor,
+                `loc_of_occur_desc` as location_type,
+                `addr_pct_cd` as incident_zip,
+                `boro_nm` as borough,
+                `latitude`,
+                `longitude`,
+                `law_cat_cd` as status,
+                `ofns_desc` as resolution_description
+            WHERE
+                {where_clause}
+            ORDER BY `cmplnt_fr_dt` DESC"""
+            
+            # Make API request
+            params = {
+                '$query': query,
+            }
+            
+            logger.info(f"Fetching NYPD crime data from {start_date_str} to {end_date_str}{' for ' + borough if borough else ''}")
+            response = requests.get(self.api_crime_url, params=params, timeout=60)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Add data source marker and normalize field names
+            for record in data:
+                record['data_source'] = 'NYPD'
+                record['agency'] = 'NYPD'
+                record['agency_name'] = 'New York Police Department'
+                
+                # Use ofns_desc as the primary complaint type for NYPD data
+                if 'resolution_description' in record:
+                    record['complaint_type'] = record['resolution_description']
+            
+            logger.info(f"Successfully fetched {len(data)} NYPD crime records{' for ' + borough if borough else ''}")
+            
+            return data
+            
+        except requests.RequestException as e:
+            logger.error(f"NYPD crime API request failed: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error processing NYPD crime API response: {e}")
             return None
     
     def refresh_data(self, borough: str = None) -> bool:
-        """Force refresh of crime data from API (ignores cache)"""
-        logger.info(f"Force refreshing crime data from API{' for ' + borough if borough else ''}...")
+        """Force refresh of safety data from APIs (ignores cache)"""
+        logger.info(f"Force refreshing safety data from APIs{' for ' + borough if borough else ''}...")
         self.data_cache = None
         self.cache_timestamp = None
         if hasattr(self, 'cached_borough'):
@@ -295,13 +465,13 @@ class SafetyAnalyzer:
         # Create empty DataFrame with required columns
         columns = [
             'unique_key', 'created_date', 'complaint_type', 'borough', 
-            'incident_zip', 'latitude', 'longitude', 'safety_category', 'safety_weight'
+            'incident_zip', 'latitude', 'longitude', 'safety_category', 'safety_weight', 'data_source'
         ]
         self.crime_data = pd.DataFrame(columns=columns)
         logger.info("Created fallback safety data (empty dataset)")
     
     def _clean_data(self):
-        """Clean and normalize the crime data"""
+        """Clean and normalize the safety data from both sources"""
         # Convert date columns
         date_columns = ['created_date', 'closed_date', 'resolution_action_updated_date']
         for col in date_columns:
@@ -309,7 +479,7 @@ class SafetyAnalyzer:
                 self.crime_data[col] = pd.to_datetime(self.crime_data[col], errors='coerce')
         
         # Clean string columns
-        string_columns = ['complaint_type', 'borough', 'incident_zip', 'city']
+        string_columns = ['complaint_type', 'borough', 'incident_zip', 'city', 'data_source']
         for col in string_columns:
             if col in self.crime_data.columns:
                 self.crime_data[col] = self.crime_data[col].astype(str).str.strip()
@@ -320,23 +490,54 @@ class SafetyAnalyzer:
         if 'longitude' in self.crime_data.columns:
             self.crime_data['longitude'] = pd.to_numeric(self.crime_data['longitude'], errors='coerce')
         
-        # Categorize complaints by safety level
-        self.crime_data['safety_category'] = self.crime_data['complaint_type'].apply(self._categorize_complaint)
-        self.crime_data['safety_weight'] = self.crime_data['safety_category'].apply(
-            lambda x: self.safety_categories[x]['weight'] if x in self.safety_categories else 0.5
-        )
+        # Categorize complaints by safety level based on data source
+        self.crime_data['safety_category'] = self.crime_data.apply(self._categorize_complaint, axis=1)
+        self.crime_data['safety_weight'] = self.crime_data.apply(self._calculate_safety_weight, axis=1)
     
-    def _categorize_complaint(self, complaint_type: str) -> str:
-        """Categorize complaint type by safety severity"""
+    def _categorize_complaint(self, row) -> str:
+        """Categorize complaint by safety severity based on data source"""
+        complaint_type = row.get('complaint_type', '')
+        data_source = row.get('data_source', '311')
+        
         if pd.isna(complaint_type):
             return 'INFRASTRUCTURE'
         
-        for category, info in self.safety_categories.items():
-            if complaint_type in info['types']:
-                return category
+        complaint_type = str(complaint_type).strip()
         
-        # Default category for uncategorized complaints
-        return 'INFRASTRUCTURE'
+        # Handle NYPD crime data with higher priority
+        if data_source == 'NYPD':
+            for category, info in self.crime_categories.items():
+                if any(crime_type in complaint_type.upper() for crime_type in info['types']):
+                    return category
+            # Default for uncategorized NYPD crimes
+            return 'PUBLIC_ORDER'
+        
+        # Handle 311 service requests
+        else:
+            for category, info in self.safety_categories.items():
+                if complaint_type in info['types']:
+                    return category
+            # Default category for uncategorized 311 complaints
+            return 'INFRASTRUCTURE'
+    
+    def _calculate_safety_weight(self, row) -> float:
+        """Calculate safety weight based on category and data source"""
+        category = row.get('safety_category', 'INFRASTRUCTURE')
+        data_source = row.get('data_source', '311')
+        
+        # Get base weight from appropriate category system
+        if data_source == 'NYPD' and category in self.crime_categories:
+            base_weight = self.crime_categories[category]['weight']
+        elif data_source == '311' and category in self.safety_categories:
+            base_weight = self.safety_categories[category]['weight']
+        else:
+            base_weight = 1.0  # Default weight
+        
+        # Apply slight boost to NYPD crime data as it represents actual crimes
+        if data_source == 'NYPD':
+            base_weight *= 1.2
+        
+        return base_weight
     
     def get_area_safety_rating(self, zip_code: str = None, borough: str = None, 
                               address: str = None, radius_miles: float = 0.5) -> Dict:
@@ -368,6 +569,9 @@ class SafetyAnalyzer:
             # Create safety summary
             safety_summary = self._create_safety_summary(area_data, safety_metrics, safety_rating)
             
+            # Calculate data source breakdown
+            data_source_breakdown = self._get_data_source_breakdown(area_data)
+            
             return {
                 'area_info': {
                     'zip_code': zip_code,
@@ -381,7 +585,10 @@ class SafetyAnalyzer:
                 'safety_summary': safety_summary,
                 'complaint_breakdown': self._get_complaint_breakdown(area_data),
                 'recent_activity': self._get_recent_activity(area_data),
-                'recommendations': self._generate_recommendations(safety_rating, safety_metrics)
+                'data_source_breakdown': data_source_breakdown,
+                'recommendations': self._generate_recommendations(safety_rating, safety_metrics),
+                'data_sources_used': ['311 Service Requests', 'NYPD Crime Data'],
+                'analysis_timestamp': datetime.now().isoformat()
             }
             
         except Exception as e:
@@ -560,6 +767,34 @@ class SafetyAnalyzer:
                 }
         
         return category_breakdown
+    
+    def _get_data_source_breakdown(self, area_data: pd.DataFrame) -> Dict:
+        """Get breakdown of incidents by data source"""
+        if area_data.empty:
+            return {}
+        
+        # Count by data source
+        source_counts = area_data['data_source'].value_counts().to_dict()
+        
+        # Calculate percentages
+        total = len(area_data)
+        source_breakdown = {}
+        
+        for source, count in source_counts.items():
+            percentage = (count / total) * 100
+            
+            # Get category breakdown for this source
+            source_data = area_data[area_data['data_source'] == source]
+            category_counts = source_data['safety_category'].value_counts().to_dict()
+            
+            source_breakdown[source] = {
+                'count': int(count),
+                'percentage': round(percentage, 1),
+                'categories': category_counts,
+                'description': 'NYPD Crime Data' if source == 'NYPD' else '311 Service Requests'
+            }
+        
+        return source_breakdown
     
     def _get_recent_activity(self, area_data: pd.DataFrame, days: int = 30) -> Dict:
         """Get recent activity summary"""
