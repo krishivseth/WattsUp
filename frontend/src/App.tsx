@@ -3,8 +3,10 @@ import logo from "./assets/WattsUpLogo.png";
 import { Tag } from "./components/Tag";
 import { SafetyRating } from "./components/SafetyRating";
 import { SafetyDetails } from "./components/SafetyDetails";
+import { ReviewsDetails } from "./components/ReviewsDetails";
 import { RouteInput } from "./components/RouteInput";
 import type { SafetyAnalysis } from "./types/safety";
+import type { ReviewsAnalysis } from "./types/reviews";
 
 interface EnergyCostData {
   annual_summary: {
@@ -23,6 +25,10 @@ function App() {
   const [safetyLoading, setSafetyLoading] = useState<boolean>(false);
   const [safetyError, setSafetyError] = useState<string>("");
   const [showSafetyDetails, setShowSafetyDetails] = useState<boolean>(false);
+  const [reviewsData, setReviewsData] = useState<ReviewsAnalysis | null>(null);
+  const [reviewsLoading, setReviewsLoading] = useState<boolean>(false);
+  const [reviewsError, setReviewsError] = useState<string>("");
+  const [showReviewsDetails, setShowReviewsDetails] = useState<boolean>(false);
   const [routeLoading, setRouteLoading] = useState<boolean>(false);
 
   const extractAddressAndRooms = async (): Promise<{address: string, numRooms: number}> => {
@@ -110,6 +116,42 @@ function App() {
     }
   };
 
+  const getReviewsAnalysis = async (address: string): Promise<ReviewsAnalysis | null> => {
+    const API_ENDPOINT = "http://127.0.0.1:62031/api/reviews";
+
+    try {
+      setReviewsLoading(true);
+      setReviewsError("");
+
+      const response = await fetch(API_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ address }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Reviews API request failed: ${response.status}`);
+      }
+
+      const data: ReviewsAnalysis = await response.json();
+      
+      // Check if no reviews were found
+      if (data.status === 'no_reviews') {
+        setReviewsError(data.message || "No reviews found for this building");
+        return null;
+      }
+      
+      return data;
+    } catch (err) {
+      setReviewsError(err instanceof Error ? err.message : "Failed to get reviews data");
+      return null;
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
+
   const handleRouteRequest = async (destination: string) => {
     try {
       setRouteLoading(true);
@@ -152,6 +194,10 @@ function App() {
       getSafetyAnalysis(address)
         .then(setSafetyData)
         .catch(err => setSafetyError(err.message));
+      
+      getReviewsAnalysis(address)
+        .then(setReviewsData)
+        .catch(err => setReviewsError(err.message));
     }
   }, [address]);
 
@@ -228,6 +274,33 @@ function App() {
           ) : (
             <div className="text-xs text-gray-500 italic">
               Safety analysis will load automatically
+            </div>
+          )}
+        </div>
+
+        {/* Google Reviews Section */}
+        <div className="border-t border-gray-200 pt-3 mt-3">
+          <div className="text-lg font-semibold text-gray-800 mb-2 flex items-center gap-2">
+            <span>⭐</span>
+            Google Reviews
+          </div>
+          {reviewsData ? (
+            <ReviewsDetails
+              reviewsData={reviewsData}
+              isExpanded={showReviewsDetails}
+              onToggle={() => setShowReviewsDetails(!showReviewsDetails)}
+            />
+          ) : reviewsLoading ? (
+            <div className="text-sm opacity-80 mb-4 text-center animate-pulse text-gray-500">
+              Analyzing building reviews...
+            </div>
+          ) : reviewsError ? (
+            <div className="bg-yellow-500/10 border border-yellow-300 text-yellow-700 rounded-lg p-2 text-xs">
+              {reviewsError}
+            </div>
+          ) : (
+            <div className="text-xs text-gray-500 italic">
+              Reviews analysis will load automatically
             </div>
           )}
         </div>
