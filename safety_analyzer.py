@@ -33,7 +33,7 @@ class SafetyAnalyzer:
     def __init__(self, crime_data_file: str = None, google_api_key: str = None):
         # NYC Open Data API endpoints
         self.api_311_url = "https://data.cityofnewyork.us/resource/erm2-nwe9.json"  # 311 service requests
-        self.api_crime_url = "https://data.cityofnewyork.us/resource/qgea-i56i.json"  # NYPD crime data
+        self.api_crime_url = "https://data.cityofnewyork.us/resource/5uac-w243.json"  # NYPD crime data
         self.crime_data = None
         self.data_cache = None
         self.cache_timestamp = None
